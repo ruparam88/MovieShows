@@ -9,13 +9,14 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', Arial, sans-serif;
         }
 
         body {
             background-color: #111;
             color: #fff;
             line-height: 1.6;
+            padding-bottom: 3rem;
         }
 
         header {
@@ -25,6 +26,11 @@
             position: sticky;
             top: 0;
             z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .logo {
@@ -32,6 +38,48 @@
             font-weight: bold;
             color: #e50914;
             text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Search Bar Wrapper styling */
+        .search-container {
+            display: flex;
+            align-items: center;
+            position: relative;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 45px 10px 15px;
+            background-color: #222;
+            border: 1px solid #444;
+            border-radius: 20px;
+            color: #fff;
+            font-size: 0.95rem;
+            transition: all 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #e50914;
+            background-color: #2a2a2a;
+            box-shadow: 0 0 8px rgba(229, 9, 20, 0.5);
+        }
+
+        .search-btn {
+            position: absolute;
+            right: 15px;
+            background: none;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 1.1rem;
+        }
+
+        .search-btn:hover {
+            color: #e50914;
         }
 
         /* Responsive Video Theater Module */
@@ -44,12 +92,13 @@
 
         .video-box {
             position: relative;
-            padding-bottom: 56.25%; /* 16:9 widescreen mapping */
+            padding-bottom: 56.25%; /* 16:9 aspect ratio */
             height: 0;
             background: #000;
             border: 2px solid #222;
             border-radius: 8px;
             overflow: hidden;
+            box-shadow: 0px 0px 20px rgba(229, 9, 20, 0.3);
         }
 
         .video-box iframe {
@@ -71,6 +120,11 @@
             border-radius: 4px;
             cursor: pointer;
             float: right;
+            transition: background 0.2s;
+        }
+
+        .close-screen:hover {
+            background: #b80710;
         }
 
         .container {
@@ -84,6 +138,8 @@
             margin: 2rem 0 1rem 0;
             border-left: 4px solid #e50914;
             padding-left: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .showcase-grid {
@@ -96,7 +152,7 @@
             background-color: #1a1a1a;
             border-radius: 6px;
             overflow: hidden;
-            transition: all 0.3s;
+            transition: transform 0.3s, border-color 0.3s;
             cursor: pointer;
             border: 1px solid #252525;
         }
@@ -110,6 +166,8 @@
             width: 100%;
             height: 255px;
             object-fit: cover;
+            display: block;
+            background-color: #222;
         }
 
         .movie-card-title {
@@ -119,6 +177,14 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            text-align: center;
+        }
+
+        .error-message {
+            color: #aaa;
+            font-size: 0.95rem;
+            font-style: italic;
+            padding: 1rem 0;
         }
     </style>
 </head>
@@ -126,77 +192,197 @@
 
     <header>
         <div class="logo">CineStream</div>
+        <div class="search-container">
+            <input type="text" id="userSearchInput" class="search-input" placeholder="Search movies, shows, typos welcome...">
+            <button class="search-btn" id="searchTriggerBtn">🔍</button>
+        </div>
     </header>
 
     <div class="theater-zone" id="theaterModule">
         <button class="close-screen" onclick="shutdownTheater()">✕ Close Player</button>
         <div class="video-box">
-            <iframe id="streamScreen" src="" allowfullscreen></iframe>
+            <iframe id="streamScreen" src="" allowfullscreen allow="autoplay; encrypted-media"></iframe>
         </div>
     </div>
 
-    <main class="container">
+   <main class="container">
+        <div id="searchResultsSection" style="display: none;">
+            <h2 class="section-heading" id="searchTitle">Suggestions for you...</h2>
+            <div class="showcase-grid" id="searchShelf"></div>
+            <hr style="border-color: #222; margin: 3rem 0 1rem 0;">
+        </div>
+
         <h2 class="section-heading">Trending Movies</h2>
-        <div class="showcase-grid" id="moviesShelf"></div>
+        <div class="showcase-grid" id="moviesShelf">
+            <p style="color:#666;">Loading content assets...</p>
+        </div>
 
         <h2 class="section-heading">Popular TV Shows</h2>
-        <div class="showcase-grid" id="showsShelf"></div>
+        <div class="showcase-grid" id="showsShelf">
+            <p style="color:#666;">Loading content assets...</p>
+        </div>
     </main>
 
     <script>
-        let videasyBaseUrl = "";
+        let videasyBaseUrl = "https://embed.su"; 
+        let debounceTimer; // Timer tracking to keep network pipelines smooth
 
-        // Run as soon as the window loads up
         document.addEventListener('DOMContentLoaded', async () => {
             await loadConfig();
-            loadGallery('/api/trending/movies', 'moviesShelf', 'movie');
-            loadGallery('/api/trending/shows', 'showsShelf', 'tv');
+            
+            // Trigger parallel backend calls for trending sections
+            loadGalleryInChunks('/api/trending/movies', 'moviesShelf', 'movie');
+            loadGalleryInChunks('/api/trending/shows', 'showsShelf', 'tv');
+
+            const searchInput = document.getElementById('userSearchInput');
+
+            // Listen to input changes in real-time as the user types
+            searchInput.addEventListener('input', () => {
+                clearTimeout(debounceTimer);
+                
+                // Wait 300ms after the user stops typing to prevent hammering the network link
+                debounceTimer = setTimeout(() => {
+                    executeDynamicSearch();
+                }, 300);
+            });
         });
 
-        // Request non-sensitive configurations from backend
         async function loadConfig() {
-            const res = await fetch('/api/config');
-            const config = await res.json();
-            videasyBaseUrl = config.videasyUrl;
+            try {
+                const res = await fetch('/api/config');
+                const config = await res.json();
+                if (config.videasyUrl) videasyBaseUrl = config.videasyUrl;
+            } catch (err) {
+                console.warn("Using default player fallback configuration domain.", err);
+            }
         }
 
-        // Fetch data through our backend bridge
-        async function loadGallery(apiEndpoint, targetDomId, streamType) {
+        /**
+         * Chunks & streams UI elements smoothly.
+         * Fetches full resource blocks, clears loading status instantly, 
+         * then renders rows in structural fragments to give an appearance of instant load times.
+         */
+        async function loadGalleryInChunks(apiEndpoint, targetDomId, streamType) {
             const container = document.getElementById(targetDomId);
             try {
                 const response = await fetch(apiEndpoint);
+                if (!response.ok) throw new Error('Data pipeline synchronization failure.');
+                
                 const catalog = await response.json();
-                
+                const items = catalog.results || [];
+
+                if (items.length === 0) {
+                    container.innerHTML = `<p class="error-message">No content found.</p>`;
+                    return;
+                }
+
+                // Clear layout anchor completely
                 container.innerHTML = '';
-                
-                catalog.results.slice(0, 12).forEach(item => {
-                    const titleName = item.title || item.name;
-                    const banner = `https://image.tmdb.org/t/p/w500${item.poster_path}`;
-                    
-                    const block = document.createElement('div');
-                    block.className = 'movie-card';
-                    block.onclick = () => ignitePlayer(streamType, item.id);
-                    
-                    block.innerHTML = `
-                        <img src="${banner}" alt="Media Poster" loading="lazy">
-                        <div class="movie-card-title" title="${titleName}">${titleName}</div>
-                    `;
-                    container.appendChild(block);
-                });
+
+                // Define structural rendering fragment limitations
+                const initialBatchSize = 6; 
+                const totalItemsToRender = 12;
+
+                // Chunk 1: Render the first row instantly (Highly responsive UX)
+                const firstChunk = items.slice(0, initialBatchSize);
+                renderItemsToContainer(firstChunk, container, streamType);
+
+                // Chunk 2: Delay remaining rows by 250ms for a staggered internal paint pipeline
+                setTimeout(() => {
+                    const secondChunk = items.slice(initialBatchSize, totalItemsToRender);
+                    renderItemsToContainer(secondChunk, container, streamType);
+                }, 250);
+
             } catch (err) {
-                container.innerHTML = `<p style="color:#666;">Failed to load assets.</p>`;
+                console.error(`Error rendering gallery (${targetDomId}):`, err);
+                container.innerHTML = `<p class="error-message">Failed to safely parse assets.</p>`;
+            }
+        }
+
+        // Appends single data blocks to target DOM shelves natively
+        function renderItemsToContainer(itemsList, targetContainer, defaultStreamType) {
+            itemsList.forEach(item => {
+                if (item.media_type === 'person') return; // Strip useless entity results
+
+                const titleName = item.title || item.name;
+                const banner = item.poster_path 
+                    ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+                    : 'https://via.placeholder.com/500x750?text=No+Image';
+                
+                const computedType = item.media_type || defaultStreamType;
+
+                const block = document.createElement('div');
+                block.className = 'movie-card';
+                block.style.opacity = '0';
+                block.style.transition = 'opacity 0.4s ease-in-out'; // Gives a smooth fade-in look
+                block.onclick = () => ignitePlayer(computedType, item.id);
+                
+                block.innerHTML = `
+                    <img src="${banner}" alt="${titleName} Poster" loading="lazy">
+                    <div class="movie-card-title" title="${titleName}">${titleName}</div>
+                `;
+                
+                targetContainer.appendChild(block);
+                
+                // Tiny delay to force css browser repaint opacity engine
+                setTimeout(() => block.style.opacity = '1', 10);
+            });
+        }
+
+        // Live interactive search parsing system
+        async function executeDynamicSearch() {
+            const queryText = document.getElementById('userSearchInput').value.trim();
+            const resultsSection = document.getElementById('searchResultsSection');
+            const searchShelf = document.getElementById('searchShelf');
+            const searchTitle = document.getElementById('searchTitle');
+
+            // If the user clears the search field, hide the shelf smoothly
+            if (!queryText) {
+                resultsSection.style.display = 'none';
+                searchShelf.innerHTML = '';
+                return;
+            }
+
+            resultsSection.style.display = 'block';
+
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(queryText)}`);
+                if (!response.ok) throw new Error('Search transmission processing failure.');
+                
+                const data = await response.json();
+                const results = data.results || [];
+
+                searchTitle.innerText = `Matching Suggestions for: "${queryText}"`;
+                searchShelf.innerHTML = ''; // Wipe past queries cleanly
+                
+                if (results.length === 0) {
+                    searchShelf.innerHTML = `<p class="error-message">No fuzzy-match results discovered for "${queryText}". Try another spelling.</p>`;
+                    return;
+                }
+
+                // Chunk suggestion output values for search engine as well
+                const initialBatch = results.slice(0, 6);
+                renderItemsToContainer(initialBatch, searchShelf, 'movie');
+
+                setTimeout(() => {
+                    const secondBatch = results.slice(6, 14); // Expanded dynamic bounds to capture webseries 
+                    renderItemsToContainer(secondBatch, searchShelf, 'movie');
+                }, 150);
+
+            } catch (err) {
+                console.error("Fuzzy Query pipeline engine fault:", err);
             }
         }
 
         function ignitePlayer(category, identifier) {
             const theater = document.getElementById('theaterModule');
             const targetScreen = document.getElementById('streamScreen');
-            
-            let streamPath = (category === 'movie') 
+            const streamCategory = (category === 'movie') ? 'movie' : 'tv';
+
+            targetScreen.src = (streamCategory === 'movie') 
                 ? `${videasyBaseUrl}/movie/${identifier}`
                 : `${videasyBaseUrl}/tv/${identifier}/1/1`;
 
-            targetScreen.src = streamPath;
             theater.style.display = 'block';
             theater.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
